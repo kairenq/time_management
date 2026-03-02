@@ -12,7 +12,7 @@ SPA-прототип системы «Учёт рабочего времени»
 - согласование заявок (для администратора/руководителя);
 - табель и аналитика с фильтром по месяцу.
 
-## Запуск
+## Запуск (веб)
 
 ```bash
 npm install
@@ -20,6 +20,33 @@ npm run dev
 ```
 
 Откройте `http://localhost:5173`.
+
+## Запуск в Electron (dev)
+
+```bash
+npm run dev
+npm run electron:dev
+```
+
+## Сборка EXE
+
+Локально (на Windows):
+
+```bash
+npm run dist:win
+```
+
+Готовый установщик будет в папке `release/`.
+
+## GitHub Actions
+
+Добавлен workflow `.github/workflows/build-windows-exe.yml`, который:
+
+1. ставит зависимости через `npm ci`;
+2. запускает `npm run dist:win`;
+3. публикует `.exe` как artifact (`time-management-windows-exe`).
+
+Можно запускать вручную через **Actions → Build Windows EXE → Run workflow**.
 
 ## Демо-учетные записи
 
