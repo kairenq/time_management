@@ -1,306 +1,257 @@
-import { useMemo, useState } from 'react';
-
-const USERS = [
-  { login: 'admin', password: 'admin123', role: 'Администратор', name: 'Ирина Волкова', department: 'Отдел кадров' },
-  { login: 'head', password: 'head123', role: 'Руководитель', name: 'Сергей Кравцов', department: 'Творческий отдел' },
-  { login: 'artist', password: 'artist123', role: 'Сотрудник', name: 'Анна Петрова', department: 'Творческий отдел' },
-];
-
-const INITIAL_RECORDS = [
-  { id: 1, employee: 'Анна Петрова', department: 'Творческий отдел', date: '2026-03-01', in: '09:05', out: '18:00', absence: '—' },
-  { id: 2, employee: 'Игорь Романов', department: 'Технический отдел', date: '2026-03-01', in: '08:58', out: '17:40', absence: '—' },
-  { id: 3, employee: 'Анна Петрова', department: 'Творческий отдел', date: '2026-03-02', in: '09:00', out: '18:20', absence: '—' },
-];
-
-const INITIAL_REQUESTS = [
-  { id: 1, employee: 'Анна Петрова', type: 'Отпуск', from: '2026-04-15', to: '2026-04-20', status: 'На согласовании' },
-  { id: 2, employee: 'Игорь Романов', type: 'Отгул', from: '2026-03-10', to: '2026-03-10', status: 'Одобрено' },
-];
-
-const EVENT_PLAN = [
-  { day: '03 марта', text: 'Репетиция оркестра (10:00–13:00)' },
-  { day: '04 марта', text: 'Концертная программа (18:00–22:00)' },
-  { day: '06 марта', text: 'Гастрольный выезд в Калугу (весь день)' },
-];
+import { useEffect, useMemo, useState } from 'react';
 
 const ABSENCE_OPTIONS = ['—', 'Отпуск', 'Больничный', 'Отгул', 'Командировка'];
+const REQUEST_TYPES = ['Отпуск', 'Больничный', 'Отгул', 'Командировка'];
 
-const formatMonth = (date) => date.slice(0, 7);
-
-const calculateHours = (start, end) => {
+const getHours = (start, end) => {
   if (!start || !end) return '0.00';
   const [sh, sm] = start.split(':').map(Number);
   const [eh, em] = end.split(':').map(Number);
-  const minutes = eh * 60 + em - (sh * 60 + sm);
-  return Math.max(0, minutes / 60).toFixed(2);
+  return Math.max(0, (eh * 60 + em - (sh * 60 + sm)) / 60).toFixed(2);
+};
+
+const api = async (url, method = 'GET', body, token) => {
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  return data;
 };
 
 export default function App() {
-  const [auth, setAuth] = useState({ login: '', password: '' });
-  const [currentUser, setCurrentUser] = useState(null);
-  const [records, setRecords] = useState(INITIAL_RECORDS);
-  const [requests, setRequests] = useState(INITIAL_REQUESTS);
+  const [token, setToken] = useState(localStorage.getItem('tm_token') || '');
+  const [user, setUser] = useState(null);
+  const [mode, setMode] = useState('login');
   const [tab, setTab] = useState('dashboard');
+  const [records, setRecords] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [monthFilter, setMonthFilter] = useState('2026-03');
+  const [loading, setLoading] = useState(false);
 
-  const isAdmin = currentUser?.role === 'Администратор';
-  const isManager = currentUser?.role === 'Руководитель';
-  const isEmployee = currentUser?.role === 'Сотрудник';
+  const [loginForm, setLoginForm] = useState({ login: '', password: '' });
+  const [registerForm, setRegisterForm] = useState({ login: '', password: '', name: '', department: '' });
+  const [recordForm, setRecordForm] = useState({ date: new Date().toISOString().slice(0, 10), timeIn: '09:00', timeOut: '18:00', absence: '—', note: '' });
+  const [requestForm, setRequestForm] = useState({ type: 'Отпуск', dateFrom: new Date().toISOString().slice(0, 10), dateTo: new Date().toISOString().slice(0, 10), comment: '' });
 
-  const [markForm, setMarkForm] = useState({
-    employee: 'Анна Петрова',
-    department: 'Творческий отдел',
-    date: new Date().toISOString().slice(0, 10),
-    in: '09:00',
-    out: '18:00',
-    absence: '—',
-  });
+  const isManager = user?.role !== 'Сотрудник';
 
-  const [requestForm, setRequestForm] = useState({
-    employee: 'Анна Петрова',
-    type: 'Отпуск',
-    from: new Date().toISOString().slice(0, 10),
-    to: new Date().toISOString().slice(0, 10),
-  });
+  const loadData = async (authToken) => {
+    const [me, allRecords, allRequests] = await Promise.all([
+      api('/api/me', 'GET', null, authToken),
+      api('/api/records', 'GET', null, authToken),
+      api('/api/requests', 'GET', null, authToken),
+    ]);
+    setUser(me);
+    setRecords(allRecords);
+    setRequests(allRequests);
+  };
 
-  const scopedRecords = useMemo(() => {
-    if (!currentUser) return [];
-    if (isEmployee) return records.filter((item) => item.employee === currentUser.name);
-    return records;
-  }, [records, currentUser, isEmployee]);
-
-  const monthRecords = useMemo(
-    () => scopedRecords.filter((item) => formatMonth(item.date) === monthFilter),
-    [scopedRecords, monthFilter],
-  );
+  useEffect(() => {
+    if (!token) return;
+    setLoading(true);
+    loadData(token)
+      .catch((e) => {
+        setError(e.message);
+        localStorage.removeItem('tm_token');
+        setToken('');
+      })
+      .finally(() => setLoading(false));
+  }, [token]);
 
   const stats = useMemo(() => {
-    const totalHours = scopedRecords.reduce((sum, item) => sum + Number(calculateHours(item.in, item.out)), 0);
-    const late = scopedRecords.filter((item) => item.in > '09:00').length;
-    const overtime = scopedRecords.filter((item) => Number(calculateHours(item.in, item.out)) > 8).length;
-    return {
-      totalHours: totalHours.toFixed(2),
-      records: scopedRecords.length,
-      late,
-      overtime,
-    };
-  }, [scopedRecords]);
+    const totalHours = records.reduce((sum, item) => sum + Number(getHours(item.timeIn, item.timeOut)), 0);
+    const late = records.filter((item) => item.timeIn > '09:00').length;
+    return { totalHours: totalHours.toFixed(2), late, count: records.length };
+  }, [records]);
 
-  const visibleRequests = useMemo(() => {
-    if (!currentUser) return [];
-    if (isEmployee) return requests.filter((item) => item.employee === currentUser.name);
-    return requests;
-  }, [requests, currentUser, isEmployee]);
-
-  const handleLogin = (event) => {
-    event.preventDefault();
-    const foundUser = USERS.find((user) => user.login === auth.login && user.password === auth.password);
-    if (!foundUser) {
-      setMessage('Ошибка: неверный логин или пароль.');
-      return;
+  const submitLogin = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (!loginForm.login || !loginForm.password) return setError('Введите логин и пароль');
+    try {
+      const data = await api('/api/auth/login', 'POST', loginForm);
+      localStorage.setItem('tm_token', data.token);
+      setToken(data.token);
+      setMessage('Успешный вход');
+    } catch (err) {
+      setError(err.message);
     }
-
-    setCurrentUser(foundUser);
-    setTab('dashboard');
-    setMessage('');
-    setMarkForm((prev) => ({ ...prev, employee: foundUser.name, department: foundUser.department }));
-    setRequestForm((prev) => ({ ...prev, employee: foundUser.name }));
   };
 
-  const addMark = (event) => {
-    event.preventDefault();
-    if (markForm.out <= markForm.in && markForm.absence === '—') {
-      setMessage('Ошибка: время ухода должно быть позже времени прихода.');
-      return;
+  const submitRegister = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (registerForm.password.length < 6) return setError('Пароль должен быть не короче 6 символов');
+    try {
+      const data = await api('/api/auth/register', 'POST', registerForm);
+      localStorage.setItem('tm_token', data.token);
+      setToken(data.token);
+      setMessage('Регистрация прошла успешно');
+    } catch (err) {
+      setError(err.message);
     }
-
-    setRecords((prev) => [{ id: Date.now(), ...markForm }, ...prev]);
-    setMessage('Отметка успешно сохранена.');
-  };
-
-  const addRequest = (event) => {
-    event.preventDefault();
-    if (requestForm.to < requestForm.from) {
-      setMessage('Ошибка: дата окончания не может быть раньше даты начала.');
-      return;
-    }
-
-    setRequests((prev) => [{ id: Date.now(), ...requestForm, status: 'На согласовании' }, ...prev]);
-    setMessage('Заявка отправлена на согласование.');
-  };
-
-  const updateRequestStatus = (id, status) => {
-    setRequests((prev) => prev.map((item) => (item.id === id ? { ...item, status } : item)));
   };
 
   const logout = () => {
-    setCurrentUser(null);
-    setAuth({ login: '', password: '' });
-    setMessage('');
+    localStorage.removeItem('tm_token');
+    setToken('');
+    setUser(null);
+    setRecords([]);
+    setRequests([]);
   };
 
-  if (!currentUser) {
+  const submitRecord = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      const created = await api('/api/records', 'POST', recordForm, token);
+      setRecords((prev) => [created, ...prev]);
+      setMessage('Отметка сохранена');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const submitRequest = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      const created = await api('/api/requests', 'POST', requestForm, token);
+      setRequests((prev) => [created, ...prev]);
+      setMessage('Заявка отправлена');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const updateRequestStatus = async (id, status) => {
+    try {
+      await api(`/api/requests/${id}/status`, 'PATCH', { status }, token);
+      setRequests((prev) => prev.map((item) => (item.id === id ? { ...item, status } : item)));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  if (!token) {
     return (
       <main className="auth-wrap">
-        <form className="card auth-card" onSubmit={handleLogin}>
-          <h1>Система учета рабочего времени</h1>
-          <p>Демо-доступ: admin/admin123, head/head123, artist/artist123</p>
-          <label>
-            Логин
-            <input value={auth.login} onChange={(e) => setAuth((p) => ({ ...p, login: e.target.value }))} required />
-          </label>
-          <label>
-            Пароль
-            <input type="password" value={auth.password} onChange={(e) => setAuth((p) => ({ ...p, password: e.target.value }))} required />
-          </label>
-          {message && <p className="error">{message}</p>}
-          <button type="submit">Войти</button>
-        </form>
+        <div className="card auth-card">
+          <h1>Учёт рабочего времени</h1>
+          <p className="muted">SQLite + регистрация/авторизация + проверка прав</p>
+          <div className="tabs">
+            <button className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Вход</button>
+            <button className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Регистрация</button>
+          </div>
+          {error && <p className="error">{error}</p>}
+          {mode === 'login' ? (
+            <form onSubmit={submitLogin}>
+              <label>Логин<input value={loginForm.login} onChange={(e) => setLoginForm((p) => ({ ...p, login: e.target.value }))} /></label>
+              <label>Пароль<input type="password" value={loginForm.password} onChange={(e) => setLoginForm((p) => ({ ...p, password: e.target.value }))} /></label>
+              <button>Войти</button>
+            </form>
+          ) : (
+            <form onSubmit={submitRegister}>
+              <label>Логин<input value={registerForm.login} onChange={(e) => setRegisterForm((p) => ({ ...p, login: e.target.value }))} /></label>
+              <label>Пароль<input type="password" value={registerForm.password} onChange={(e) => setRegisterForm((p) => ({ ...p, password: e.target.value }))} /></label>
+              <label>ФИО<input value={registerForm.name} onChange={(e) => setRegisterForm((p) => ({ ...p, name: e.target.value }))} /></label>
+              <label>Отдел<input value={registerForm.department} onChange={(e) => setRegisterForm((p) => ({ ...p, department: e.target.value }))} /></label>
+              <button>Создать аккаунт</button>
+            </form>
+          )}
+        </div>
       </main>
     );
   }
-
-  const canModerateRequests = isAdmin || isManager;
 
   return (
     <main className="app">
       <header className="topbar card">
         <div>
-          <h1>Учет рабочего времени</h1>
-          <p>{currentUser.name} · {currentUser.role} · {currentUser.department}</p>
+          <b>{user?.name}</b> · {user?.role} · {user?.department}
         </div>
         <button onClick={logout}>Выйти</button>
       </header>
 
-      {message && <p className="message">{message}</p>}
-
       <nav className="tabs">
-        {[
-          ['dashboard', 'Панель'],
-          ['attendance', 'Явки/неявки'],
-          ['schedule', 'Смены'],
-          ['requests', 'Заявки'],
-          ['reports', 'Табель и отчеты'],
-        ].map(([key, label]) => (
-          <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>
-        ))}
+        <button className={tab === 'dashboard' ? 'active' : ''} onClick={() => setTab('dashboard')}>Сводка</button>
+        <button className={tab === 'attendance' ? 'active' : ''} onClick={() => setTab('attendance')}>Посещаемость</button>
+        <button className={tab === 'requests' ? 'active' : ''} onClick={() => setTab('requests')}>Заявки</button>
       </nav>
+
+      {loading && <p className="message">Загрузка...</p>}
+      {message && <p className="message">{message}</p>}
+      {error && <p className="error">{error}</p>}
 
       {tab === 'dashboard' && (
         <section className="grid">
+          <article className="card stat"><h3>Записей</h3><strong>{stats.count}</strong></article>
           <article className="card stat"><h3>Всего часов</h3><strong>{stats.totalHours}</strong></article>
-          <article className="card stat"><h3>Записей табеля</h3><strong>{stats.records}</strong></article>
-          <article className="card stat"><h3>Опоздания</h3><strong>{stats.late}</strong></article>
-          <article className="card stat"><h3>Переработки</h3><strong>{stats.overtime}</strong></article>
+          <article className="card stat"><h3>Опозданий</h3><strong>{stats.late}</strong></article>
         </section>
       )}
 
       {tab === 'attendance' && (
         <section className="split">
-          <form className="card" onSubmit={addMark}>
-            <h2>Отметка прихода/ухода</h2>
-            <label>Сотрудник<input value={markForm.employee} onChange={(e) => setMarkForm((prev) => ({ ...prev, employee: e.target.value }))} disabled={isEmployee} /></label>
-            <label>Отдел<input value={markForm.department} onChange={(e) => setMarkForm((prev) => ({ ...prev, department: e.target.value }))} disabled={isEmployee} /></label>
-            <label>Дата<input type="date" value={markForm.date} onChange={(e) => setMarkForm((prev) => ({ ...prev, date: e.target.value }))} required /></label>
-            <label>Приход<input type="time" value={markForm.in} onChange={(e) => setMarkForm((prev) => ({ ...prev, in: e.target.value }))} required /></label>
-            <label>Уход<input type="time" value={markForm.out} onChange={(e) => setMarkForm((prev) => ({ ...prev, out: e.target.value }))} required /></label>
-            <label>
-              Тип отсутствия
-              <select value={markForm.absence} onChange={(e) => setMarkForm((prev) => ({ ...prev, absence: e.target.value }))}>
-                {ABSENCE_OPTIONS.map((opt) => <option key={opt}>{opt}</option>)}
-              </select>
-            </label>
-            <button>Сохранить отметку</button>
+          <form className="card" onSubmit={submitRecord}>
+            <h2>Добавить отметку</h2>
+            <label>Дата<input type="date" value={recordForm.date} onChange={(e) => setRecordForm((p) => ({ ...p, date: e.target.value }))} required /></label>
+            <label>Приход<input type="time" value={recordForm.timeIn} onChange={(e) => setRecordForm((p) => ({ ...p, timeIn: e.target.value }))} required /></label>
+            <label>Уход<input type="time" value={recordForm.timeOut} onChange={(e) => setRecordForm((p) => ({ ...p, timeOut: e.target.value }))} /></label>
+            <label>Отсутствие<select value={recordForm.absence} onChange={(e) => setRecordForm((p) => ({ ...p, absence: e.target.value }))}>{ABSENCE_OPTIONS.map((a) => <option key={a}>{a}</option>)}</select></label>
+            <label>Комментарий<input value={recordForm.note} onChange={(e) => setRecordForm((p) => ({ ...p, note: e.target.value }))} /></label>
+            <button>Сохранить</button>
           </form>
-
           <div className="card">
-            <h2>Последние отметки</h2>
+            <h2>История</h2>
             <table>
               <thead><tr><th>Сотрудник</th><th>Дата</th><th>Приход</th><th>Уход</th><th>Часы</th></tr></thead>
               <tbody>
-                {scopedRecords.slice(0, 10).map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.employee}</td><td>{item.date}</td><td>{item.in}</td><td>{item.out}</td><td>{calculateHours(item.in, item.out)}</td>
-                  </tr>
-                ))}
+                {records.map((r) => <tr key={r.id}><td>{r.employee}</td><td>{r.date}</td><td>{r.timeIn}</td><td>{r.timeOut || '—'}</td><td>{getHours(r.timeIn, r.timeOut)}</td></tr>)}
               </tbody>
             </table>
           </div>
         </section>
       )}
 
-      {tab === 'schedule' && (
-        <section className="card">
-          <h2>График смен и мероприятий</h2>
-          <ul className="timeline">
-            {EVENT_PLAN.map((event) => <li key={event.day}><b>{event.day}</b> — {event.text}</li>)}
-          </ul>
-          <p>Раздел учитывает репетиции, концерты и гастрольные выезды с нестандартной занятостью сотрудников.</p>
-        </section>
-      )}
-
       {tab === 'requests' && (
         <section className="split">
-          <form className="card" onSubmit={addRequest}>
-            <h2>Заявка на отсутствие</h2>
-            <label>Сотрудник<input value={requestForm.employee} onChange={(e) => setRequestForm((p) => ({ ...p, employee: e.target.value }))} disabled={isEmployee} /></label>
-            <label>Тип<select value={requestForm.type} onChange={(e) => setRequestForm((p) => ({ ...p, type: e.target.value }))}><option>Отпуск</option><option>Больничный</option><option>Отгул</option><option>Командировка</option></select></label>
-            <label>С<input type="date" value={requestForm.from} onChange={(e) => setRequestForm((p) => ({ ...p, from: e.target.value }))} /></label>
-            <label>По<input type="date" value={requestForm.to} onChange={(e) => setRequestForm((p) => ({ ...p, to: e.target.value }))} /></label>
-            <button>Отправить заявку</button>
+          <form className="card" onSubmit={submitRequest}>
+            <h2>Новая заявка</h2>
+            <label>Тип<select value={requestForm.type} onChange={(e) => setRequestForm((p) => ({ ...p, type: e.target.value }))}>{REQUEST_TYPES.map((t) => <option key={t}>{t}</option>)}</select></label>
+            <label>С<input type="date" value={requestForm.dateFrom} onChange={(e) => setRequestForm((p) => ({ ...p, dateFrom: e.target.value }))} /></label>
+            <label>По<input type="date" value={requestForm.dateTo} onChange={(e) => setRequestForm((p) => ({ ...p, dateTo: e.target.value }))} /></label>
+            <label>Комментарий<input value={requestForm.comment} onChange={(e) => setRequestForm((p) => ({ ...p, comment: e.target.value }))} /></label>
+            <button>Отправить</button>
           </form>
           <div className="card">
-            <h2>Статус заявок</h2>
+            <h2>Статусы заявок</h2>
             <table>
               <thead><tr><th>Сотрудник</th><th>Тип</th><th>Период</th><th>Статус</th><th>Действия</th></tr></thead>
               <tbody>
-                {visibleRequests.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.employee}</td>
-                    <td>{item.type}</td>
-                    <td>{item.from} — {item.to}</td>
-                    <td>{item.status}</td>
-                    <td>
-                      {canModerateRequests && item.status === 'На согласовании' ? (
-                        <div className="actions">
-                          <button type="button" onClick={() => updateRequestStatus(item.id, 'Одобрено')}>Одобрить</button>
-                          <button type="button" className="danger" onClick={() => updateRequestStatus(item.id, 'Отклонено')}>Отклонить</button>
-                        </div>
-                      ) : '—'}
+                {requests.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.employee}</td><td>{r.type}</td><td>{r.dateFrom} — {r.dateTo}</td><td>{r.status}</td>
+                    <td className="actions">
+                      {isManager && r.status === 'На согласовании' && (
+                        <>
+                          <button type="button" onClick={() => updateRequestStatus(r.id, 'Одобрено')}>Одобрить</button>
+                          <button type="button" className="danger" onClick={() => updateRequestStatus(r.id, 'Отклонено')}>Отклонить</button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </section>
-      )}
-
-      {tab === 'reports' && (
-        <section className="card">
-          <h2>Табель (T-13) и аналитика</h2>
-          <div className="filters">
-            <label>
-              Месяц
-              <input type="month" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} />
-            </label>
-          </div>
-          <table>
-            <thead><tr><th>Сотрудник</th><th>Отдел</th><th>Дата</th><th>Часы</th><th>Отклонения</th></tr></thead>
-            <tbody>
-              {monthRecords.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.employee}</td>
-                  <td>{item.department}</td>
-                  <td>{item.date}</td>
-                  <td>{calculateHours(item.in, item.out)}</td>
-                  <td>{item.in > '09:00' ? 'Опоздание' : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!monthRecords.length && <p className="muted">За выбранный месяц данные отсутствуют.</p>}
         </section>
       )}
     </main>

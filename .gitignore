@@ -4,3 +4,5 @@ dist/
 *.log
 
 release/
+
+time_management.db*
