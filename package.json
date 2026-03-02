@@ -44,5 +44,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }
-  }
+  },
+  "description": "Desktop and web time tracking app for coursework",
+  "author": "Coursework Team"
 }
