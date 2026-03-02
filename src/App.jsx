@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 const ABSENCE_OPTIONS = ['—', 'Отпуск', 'Больничный', 'Отгул', 'Командировка'];
 const REQUEST_TYPES = ['Отпуск', 'Больничный', 'Отгул', 'Командировка'];
+const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:3001' : '';
 
 const getHours = (start, end) => {
   if (!start || !end) return '0.00';
@@ -10,18 +11,26 @@ const getHours = (start, end) => {
   return Math.max(0, (eh * 60 + em - (sh * 60 + sm)) / 60).toFixed(2);
 };
 
-const api = async (url, method = 'GET', body, token) => {
-  const res = await fetch(url, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
-  return data;
+const api = async (path, method = 'GET', body, token) => {
+  try {
+    const res = await fetch(`${API_BASE}/api${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+    return data;
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error('Сервер недоступен. Запустите backend: npm run server');
+    }
+    throw error;
+  }
 };
 
 export default function App() {
@@ -44,9 +53,9 @@ export default function App() {
 
   const loadData = async (authToken) => {
     const [me, allRecords, allRequests] = await Promise.all([
-      api('/api/me', 'GET', null, authToken),
-      api('/api/records', 'GET', null, authToken),
-      api('/api/requests', 'GET', null, authToken),
+      api('/me', 'GET', null, authToken),
+      api('/records', 'GET', null, authToken),
+      api('/requests', 'GET', null, authToken),
     ]);
     setUser(me);
     setRecords(allRecords);
@@ -76,7 +85,7 @@ export default function App() {
     setError('');
     if (!loginForm.login || !loginForm.password) return setError('Введите логин и пароль');
     try {
-      const data = await api('/api/auth/login', 'POST', loginForm);
+      const data = await api('/auth/login', 'POST', loginForm);
       localStorage.setItem('tm_token', data.token);
       setToken(data.token);
       setMessage('Успешный вход');
@@ -90,7 +99,7 @@ export default function App() {
     setError('');
     if (registerForm.password.length < 6) return setError('Пароль должен быть не короче 6 символов');
     try {
-      const data = await api('/api/auth/register', 'POST', registerForm);
+      const data = await api('/auth/register', 'POST', registerForm);
       localStorage.setItem('tm_token', data.token);
       setToken(data.token);
       setMessage('Регистрация прошла успешно');
@@ -111,7 +120,7 @@ export default function App() {
     e.preventDefault();
     setError('');
     try {
-      const created = await api('/api/records', 'POST', recordForm, token);
+      const created = await api('/records', 'POST', recordForm, token);
       setRecords((prev) => [created, ...prev]);
       setMessage('Отметка сохранена');
     } catch (err) {
@@ -123,7 +132,7 @@ export default function App() {
     e.preventDefault();
     setError('');
     try {
-      const created = await api('/api/requests', 'POST', requestForm, token);
+      const created = await api('/requests', 'POST', requestForm, token);
       setRequests((prev) => [created, ...prev]);
       setMessage('Заявка отправлена');
     } catch (err) {
@@ -133,7 +142,7 @@ export default function App() {
 
   const updateRequestStatus = async (id, status) => {
     try {
-      await api(`/api/requests/${id}/status`, 'PATCH', { status }, token);
+      await api(`/requests/${id}/status`, 'PATCH', { status }, token);
       setRequests((prev) => prev.map((item) => (item.id === id ? { ...item, status } : item)));
     } catch (err) {
       setError(err.message);

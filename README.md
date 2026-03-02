@@ -41,3 +41,12 @@ npm run build
 ```bash
 npm run dist:win
 ```
+
+
+## Важно для Electron
+
+Desktop-клиент использует тот же API, поэтому перед запуском Electron/EXE нужно запустить backend:
+
+```bash
+npm run server
+```
